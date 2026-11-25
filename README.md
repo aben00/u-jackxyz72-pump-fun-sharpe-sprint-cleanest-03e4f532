@@ -14,7 +14,7 @@ Ranking is by **hourly Sharpe ratio**, not net PnL — and the final window is o
 
 - **Equal small stakes** — every entry is 0.05 SOL, so no single coin can dominate an hour's equity mark.
 - **Hour pacing** — buys are capped per hour bucket (counted in slots from the first slot seen), so activity spreads evenly across the window instead of front-loading into hour one and sitting flat.
-- **Fast exits** — take profit at +30%, stop loss at −12%, a trailing stop once a position peaks at +15%, and a stale exit for positions that go nowhere. Wins are banked before a pump coin retraces, losers are cut early, keeping each hour's return small and mostly positive.
+- **Fast exits** — take profit at +10%, stop loss at −6%, a trailing stop once a position peaks at +5%, and a stale exit for positions that go nowhere. Probe positions exit even faster (+6% / −4%). Wins are banked before a pump coin retraces, losers are cut early, keeping each hour's return small and mostly positive.
 - **Guardrail probes** — a looser second pass buys 0.02 SOL of merely buy-led coins, purely to bank round trips of ≥ 0.01 SOL on ≥ 20 distinct mints inside the short window.
 
 ## How it works
@@ -23,8 +23,8 @@ Ranking is by **hourly Sharpe ratio**, not net PnL — and the final window is o
 
 1. **Exits first** — every batch starts by checking held positions against the take-profit / stop-loss / trailing / stale rules, so freed slots and cash are visible to the entry passes.
 2. **Tape folding** — the batch's `CreateEvent` / `TradeEvent` / `CompleteEvent` records are folded into a per-coin flow (buy vs sell volume and count, distinct buyers, window-high virtual price), in chain order.
-3. **Strict entries** — young (≤ 4,000 slots), buy-led (buy volume ≥ 3× sell volume, ≥ 10 distinct buyers, ≥ 25 trades), real SOL reserve between 2 and 60, price still ≥ 95% of its window high.
-4. **Probe entries** — looser gates for coverage, as above.
+3. **Strict entries** — young (≤ 6,000 slots), buy-led (buy volume ≥ 4× sell volume, ≥ 20 distinct buyers, ≥ 40 trades), real SOL reserve between 5 and 80, price still ≥ 92% of its window high.
+4. **Probe entries** — looser gates for coverage (≥ 4 trades, ≥ 3 buyers, buy-led, ≥ 70% of window high), as above.
 
 All money math is `BigInt` lamports; all price comparisons are bigint cross-multiplication, never floats. The bot is fully deterministic: no clock, no `Math.random`, no environment, no network, and Map iteration follows insertion order — two runs produce byte-identical action logs. The only sanctioned randomness, `hello.seed`, is deliberately unused.
 

@@ -10,9 +10,11 @@
 //     optimises for STEADY, not big: equal small stakes, quick exits, and
 //     activity paced evenly across the hours of the window.
 //   * Every position is the same size, so no single coin can dominate an
-//     hour's mark. Wins are banked fast (take profit at +30%) and losers
-//     are cut fast (stop loss at -12%), which keeps each hour's equity move
-//     small and mostly positive.
+//     hour's mark. Wins are banked fast (take profit at +10%) and losers
+//     are cut fast (stop loss at -6%), which keeps each hour's equity move
+//     small and mostly positive. Probe positions — the weak-signal buys
+//     that only exist to clear the 20-coin bar — exit even faster
+//     (+6% / -4%), so they bank their round trip and free the slot.
 //   * The guardrail needs round trips of >= 0.01 SOL on >= 20 distinct
 //     mints inside a 6-hour window, so the bot also runs a looser "probe"
 //     pass: tiny 0.02 SOL buys on merely buy-led coins, purely to widen
@@ -38,7 +40,9 @@ import {
 // ------------------------------------------------------------ sizing & fees
 // One entry costs ~125 bps curve fees + 105,000 lamports tx fees per side.
 // On a 0.05 SOL stake that is ~0.00073 SOL per leg, ~2.9% round trip, so a
-// +30% take-profit still nets about +27% and a -12% stop nets about -15%.
+// +10% take-profit still nets about +7% and a -6% stop nets about -9%.
+// Probe buys are 0.02 SOL, so their round trip costs ~3.5% of stake —
+// their exits are tighter (+6% / -4%) to compensate.
 const STAKE = (LAMPORTS_PER_SOL * 5n) / 100n; // 0.05 SOL, every entry equal
 const PROBE_STAKE = (LAMPORTS_PER_SOL * 2n) / 100n; // 0.02 SOL probe entries
 const MIN_STAKE = (LAMPORTS_PER_SOL * 2n) / 100n; // never buy below this
@@ -60,7 +64,7 @@ const MAX_BUYS_PER_HOUR = 8;
 // setup is worse than no trade at all.
 const STRICT_MAX_AGE = 6000; // slots since CreateEvent (~40 min)
 const STRICT_MIN_TRADES = 40;
-const STRICT_MIN_BUYERS = 15;
+const STRICT_MIN_BUYERS = 20;
 const STRICT_MIN_BUY_VOL_X = 4n; // buy volume >= 4x sell volume
 const STRICT_MIN_REAL_SOL = 5n * LAMPORTS_PER_SOL;
 const STRICT_MAX_REAL_SOL = 80n * LAMPORTS_PER_SOL;
@@ -68,22 +72,27 @@ const STRICT_NEAR_HIGH_PCT = 92n; // price >= 92% of window high
 
 // Probe pass: much looser, only to reach 20 distinct coins. A probe is a
 // real trade with the same exits, just a smaller stake and a weaker signal.
-const PROBE_MIN_AGE = 3000;
-const PROBE_MAX_AGE = 9000;
-const PROBE_MIN_TRADES = 10;
-const PROBE_MIN_BUYERS = 5;
-const PROBE_MIN_REAL_SOL = 1n * LAMPORTS_PER_SOL;
+const PROBE_MIN_AGE = 1200;
+const PROBE_MAX_AGE = 20000;
+const PROBE_MIN_TRADES = 4;
+const PROBE_MIN_BUYERS = 3;
+const PROBE_MIN_REAL_SOL = (LAMPORTS_PER_SOL * 5n) / 10n; // 0.5 SOL
 const PROBE_MAX_REAL_SOL = 80n * LAMPORTS_PER_SOL;
-const PROBE_NEAR_HIGH_PCT = 85n;
+const PROBE_NEAR_HIGH_PCT = 70n;
 
 // ------------------------------------------------------------ exit plan
 // Bank wins early, cut losers early, trail a winner that keeps running,
-// and free the slot when a position goes nowhere.
-const TAKE_PROFIT_PCT = 130n; // value >= 130% of cost
-const STOP_LOSS_PCT = 88n; // value <= 88% of cost
-const TRAIL_ARM_PCT = 115n; // trailing arms once peak >= 115% of cost
-const TRAIL_PULLBACK_PCT = 94n; // sell when value <= 94% of peak
-const STALE_AGE = 6000; // slots held without progress
+// and free the slot when a position goes nowhere. Probes exit tighter:
+// they are weak-signal coverage buys, not convictions.
+const TAKE_PROFIT_PCT = 110n; // value >= 110% of cost
+const STOP_LOSS_PCT = 94n; // value <= 94% of cost
+const TRAIL_ARM_PCT = 105n; // trailing arms once peak >= 105% of cost
+const TRAIL_PULLBACK_PCT = 97n; // sell when value <= 97% of peak
+const PROBE_TAKE_PROFIT_PCT = 106n; // probe value >= 106% of cost
+const PROBE_STOP_LOSS_PCT = 96n; // probe value <= 96% of cost
+const PROBE_TRAIL_ARM_PCT = 102n; // probe trailing arms once peak >= 102%
+const PROBE_TRAIL_PULLBACK_PCT = 98n; // probe sell at <= 98% of peak
+const STALE_AGE = 3000; // slots held without progress
 const STALE_MAX_PCT = 102n; // stale exit only while value < 102% of cost
 
 const REENTRY_COOLDOWN = 15000; // slots before the same mint may re-enter
@@ -124,6 +133,7 @@ function freshFlow(): CoinFlow {
 const flows = new Map<string, CoinFlow>();
 const reenterAfter = new Map<string, number>(); // mint -> earliest re-entry slot
 const peakValue = new Map<string, bigint>(); // mint -> best mark value seen
+const probeHeld = new Set<string>(); // mints bought by the probe pass (tighter exits)
 const buysPerHour = new Map<number, bigint>(); // hour bucket -> buys placed
 let firstSlot = -1;
 
@@ -153,16 +163,24 @@ function hourOf(slot: number): number {
   return Math.floor((slot - firstSlot) / SLOTS_PER_HOUR);
 }
 
-/** One reason a held position should be sold now, or null to keep holding. */
+/**
+ * One reason a held position should be sold now, or null to keep holding.
+ * Thresholds are passed in so probe positions (weak-signal coverage buys)
+ * can exit on a tighter plan than strict entries.
+ */
 function exitReason(
   value: bigint,
   cost: bigint,
   peak: bigint,
   ageSlots: number,
+  takeProfitPct: bigint,
+  stopLossPct: bigint,
+  trailArmPct: bigint,
+  trailPullbackPct: bigint,
 ): string | null {
-  if (value * 100n >= cost * TAKE_PROFIT_PCT) return 'take-profit';
-  if (value * 100n <= cost * STOP_LOSS_PCT) return 'stop-loss';
-  if (peak * 100n >= cost * TRAIL_ARM_PCT && value * 100n <= peak * TRAIL_PULLBACK_PCT) {
+  if (value * 100n >= cost * takeProfitPct) return 'take-profit';
+  if (value * 100n <= cost * stopLossPct) return 'stop-loss';
+  if (peak * 100n >= cost * trailArmPct && value * 100n <= peak * trailPullbackPct) {
     return 'trailing-stop';
   }
   if (ageSlots > STALE_AGE && value * 100n < cost * STALE_MAX_PCT) return 'stale';
@@ -221,7 +239,18 @@ await runBot({
         flow !== undefined && flow.createdSlot !== null
           ? batch.slot - flow.createdSlot
           : 0;
-      if (exitReason(value, cost, peak, age) === null) continue;
+      const isProbe = probeHeld.has(mint);
+      const reason = exitReason(
+        value,
+        cost,
+        peak,
+        age,
+        isProbe ? PROBE_TAKE_PROFIT_PCT : TAKE_PROFIT_PCT,
+        isProbe ? PROBE_STOP_LOSS_PCT : STOP_LOSS_PCT,
+        isProbe ? PROBE_TRAIL_ARM_PCT : TRAIL_ARM_PCT,
+        isProbe ? PROBE_TRAIL_PULLBACK_PCT : TRAIL_PULLBACK_PCT,
+      );
+      if (reason === null) continue;
       orders.push({
         side: 'sell',
         mint,
@@ -229,6 +258,7 @@ await runBot({
         max_slippage_bps: MAX_SLIPPAGE_BPS,
       });
       peakValue.delete(mint);
+      probeHeld.delete(mint);
     }
 
     // --- step 2: fold this batch's events into the per-coin flows. The
@@ -268,6 +298,7 @@ await runBot({
         flows.delete(e.mint);
         peakValue.delete(e.mint);
         reenterAfter.delete(e.mint);
+        probeHeld.delete(e.mint);
       }
     }
 
@@ -351,6 +382,7 @@ await runBot({
         max_slippage_bps: MAX_SLIPPAGE_BPS,
       });
       reenterAfter.set(mint, batch.slot + REENTRY_COOLDOWN);
+      probeHeld.add(mint);
       free -= PROBE_STAKE + txFee;
       openSlots -= 1;
       countBuy();
