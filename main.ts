@@ -264,7 +264,7 @@ await runBot({
         // CompleteEvent: the harness closes the position itself; drop the
         // local tracking so a later re-creation of the mint starts clean.
         flows.delete(e.mint);
-        peakValue.delete(mint);
+        peakValue.delete(e.mint);
         reenterAfter.delete(e.mint);
       }
     }
