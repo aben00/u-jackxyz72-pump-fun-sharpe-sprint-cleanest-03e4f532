@@ -12,9 +12,9 @@ The bot trades 10 SOL of virtual money on a 6-hour replay of pump.fun bonding-cu
 
 Ranking is by **hourly Sharpe ratio**, not net PnL — and the final window is only six hours, so the strategy optimises for *steady* instead of *big*:
 
-- **Equal small stakes** — every entry is 0.03 SOL, so no single coin can dominate an hour's equity mark.
+- **Equal small stakes** — every entry is 0.05 SOL, so no single coin can dominate an hour's equity mark.
 - **Hour pacing** — buys are capped per hour bucket (counted in slots from the first slot seen), so activity spreads evenly across the window instead of front-loading into hour one and sitting flat.
-- **Fast exits** — take profit at +12%, stop loss at −8%, a trailing stop once a position peaks at +6%, and a stale exit for positions that go nowhere. Wins are banked early and losers are cut early, keeping each hour's return small and mostly positive.
+- **Fast exits** — take profit at +30%, stop loss at −12%, a trailing stop once a position peaks at +15%, and a stale exit for positions that go nowhere. Wins are banked before a pump coin retraces, losers are cut early, keeping each hour's return small and mostly positive.
 - **Guardrail probes** — a looser second pass buys 0.02 SOL of merely buy-led coins, purely to bank round trips of ≥ 0.01 SOL on ≥ 20 distinct mints inside the short window.
 
 ## How it works

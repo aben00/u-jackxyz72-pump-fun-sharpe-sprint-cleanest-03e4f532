@@ -10,8 +10,8 @@
 //     optimises for STEADY, not big: equal small stakes, quick exits, and
 //     activity paced evenly across the hours of the window.
 //   * Every position is the same size, so no single coin can dominate an
-//     hour's mark. Wins are banked fast (take profit at +12%) and losers
-//     are cut fast (stop loss at -8%), which keeps each hour's equity move
+//     hour's mark. Wins are banked fast (take profit at +30%) and losers
+//     are cut fast (stop loss at -12%), which keeps each hour's equity move
 //     small and mostly positive.
 //   * The guardrail needs round trips of >= 0.01 SOL on >= 20 distinct
 //     mints inside a 6-hour window, so the bot also runs a looser "probe"
@@ -37,9 +37,9 @@ import {
 
 // ------------------------------------------------------------ sizing & fees
 // One entry costs ~125 bps curve fees + 105,000 lamports tx fees per side.
-// On a 0.03 SOL stake that is ~0.00048 SOL per leg, ~3.2% round trip, so a
-// +12% take-profit still nets about +9% and a -8% stop nets about -11%.
-const STAKE = (LAMPORTS_PER_SOL * 3n) / 100n; // 0.03 SOL, every entry equal
+// On a 0.05 SOL stake that is ~0.00073 SOL per leg, ~2.9% round trip, so a
+// +30% take-profit still nets about +27% and a -12% stop nets about -15%.
+const STAKE = (LAMPORTS_PER_SOL * 5n) / 100n; // 0.05 SOL, every entry equal
 const PROBE_STAKE = (LAMPORTS_PER_SOL * 2n) / 100n; // 0.02 SOL probe entries
 const MIN_STAKE = (LAMPORTS_PER_SOL * 2n) / 100n; // never buy below this
 const MAX_SLIPPAGE_BPS = 1000; // 10%: 2-slot latency, reject wild fills
@@ -51,37 +51,39 @@ const MAX_SLIPPAGE_BPS = 1000; // 10%: 2-slot latency, reject wild fills
 // the first hour and then sit flat. Flat hours drag the Sharpe mean down
 // and push the stdev up; paced hours keep the return stream even.
 const SLOTS_PER_HOUR = 9000;
-const MAX_BUYS_PER_HOUR = 10;
+const MAX_BUYS_PER_HOUR = 8;
 
 // ------------------------------------------------------------ entry gates
 // Strict pass: a coin is young, its tape is clearly buy-led, and its price
-// is still holding near its window high (rising, not fading).
-const STRICT_MAX_AGE = 4000; // slots since CreateEvent (~27 min)
-const STRICT_MIN_TRADES = 25;
-const STRICT_MIN_BUYERS = 10;
-const STRICT_MIN_BUY_VOL_X = 3n; // buy volume >= 3x sell volume
-const STRICT_MIN_REAL_SOL = 2n * LAMPORTS_PER_SOL;
-const STRICT_MAX_REAL_SOL = 60n * LAMPORTS_PER_SOL;
-const STRICT_NEAR_HIGH_PCT = 95n; // price >= 95% of window high
+// is still holding near its window high (rising, not fading). The bar is
+// deliberately high — every extra trade pays ~3% in fees, so a marginal
+// setup is worse than no trade at all.
+const STRICT_MAX_AGE = 6000; // slots since CreateEvent (~40 min)
+const STRICT_MIN_TRADES = 40;
+const STRICT_MIN_BUYERS = 15;
+const STRICT_MIN_BUY_VOL_X = 4n; // buy volume >= 4x sell volume
+const STRICT_MIN_REAL_SOL = 5n * LAMPORTS_PER_SOL;
+const STRICT_MAX_REAL_SOL = 80n * LAMPORTS_PER_SOL;
+const STRICT_NEAR_HIGH_PCT = 92n; // price >= 92% of window high
 
 // Probe pass: much looser, only to reach 20 distinct coins. A probe is a
 // real trade with the same exits, just a smaller stake and a weaker signal.
 const PROBE_MIN_AGE = 3000;
-const PROBE_MAX_AGE = 15000;
-const PROBE_MIN_TRADES = 6;
-const PROBE_MIN_BUYERS = 4;
+const PROBE_MAX_AGE = 9000;
+const PROBE_MIN_TRADES = 10;
+const PROBE_MIN_BUYERS = 5;
 const PROBE_MIN_REAL_SOL = 1n * LAMPORTS_PER_SOL;
-const PROBE_MAX_REAL_SOL = 60n * LAMPORTS_PER_SOL;
-const PROBE_NEAR_HIGH_PCT = 80n;
+const PROBE_MAX_REAL_SOL = 80n * LAMPORTS_PER_SOL;
+const PROBE_NEAR_HIGH_PCT = 85n;
 
 // ------------------------------------------------------------ exit plan
 // Bank wins early, cut losers early, trail a winner that keeps running,
 // and free the slot when a position goes nowhere.
-const TAKE_PROFIT_PCT = 112n; // value >= 112% of cost
-const STOP_LOSS_PCT = 92n; // value <= 92% of cost
-const TRAIL_ARM_PCT = 106n; // trailing arms once peak >= 106% of cost
-const TRAIL_PULLBACK_PCT = 96n; // sell when value <= 96% of peak
-const STALE_AGE = 4500; // slots held without progress
+const TAKE_PROFIT_PCT = 130n; // value >= 130% of cost
+const STOP_LOSS_PCT = 88n; // value <= 88% of cost
+const TRAIL_ARM_PCT = 115n; // trailing arms once peak >= 115% of cost
+const TRAIL_PULLBACK_PCT = 94n; // sell when value <= 94% of peak
+const STALE_AGE = 6000; // slots held without progress
 const STALE_MAX_PCT = 102n; // stale exit only while value < 102% of cost
 
 const REENTRY_COOLDOWN = 15000; // slots before the same mint may re-enter
